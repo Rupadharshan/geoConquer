@@ -1,102 +1,126 @@
-// map.js — Leaflet map, GPS path tracking, loop-closure detection, territory rendering
+// map.js — Leaflet map, live GPS tracking, trail drawing, area preview, territory rendering
 
 import { detectCheat, haversineKm } from "./anticheat.js";
 
 // ── Module state ───────────────────────────────────────────────────────────────
-let map          = null;
-let polyline     = null;   // current walking path drawn on the map
-let startMarker  = null;   // pulsing circle at the start point
-let posMarker    = null;   // blue dot for current position
-let layers       = {};     // { [territoryId]: L.Polygon }
+let map            = null;
+let trailLine      = null;   // green polyline drawn as user walks
+let previewPoly    = null;   // transparent polygon preview while walking
+let startMarker    = null;   // pulsing circle at start point
+let posMarker      = null;   // blue dot = current live position
+let accuracyCircle = null;   // grey accuracy ring around position dot
+let layers         = {};     // { [territoryId]: L.Polygon }
 
-let path      = [];        // [{lat, lng, time}, …] accumulated GPS points
-let watchID   = null;      // navigator.geolocation watchID
-let cbs       = {};        // callbacks set by startTracking()
+let path       = [];         // [{lat, lng, time}, …]
+let watchID    = null;
+let cbs        = {};         // callbacks set by startTracking()
+let autoFollow = true;       // whether map pans to follow the user
 
-// ── Tuning knobs ──────────────────────────────────────────────────────────────
-const CLOSE_RADIUS_KM = 0.020;   // 20 m — auto-close loop when within this distance of start
-const MIN_PATH_KM     = 0.08;    // 80 m — minimum path before loop can close
-const MIN_POINTS      = 6;       // need at least this many GPS fixes
+// ── Tuning ─────────────────────────────────────────────────────────────────────
+const CLOSE_RADIUS_KM = 0.020;  // 20 m  — auto-close loop
+const MIN_PATH_KM     = 0.080;  // 80 m  — min walk before loop can close
+const MIN_POINTS      = 6;
 
-// ── Public API ────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  PUBLIC API
+// ══════════════════════════════════════════════════════════════════════════════
 
-/**
- * Initialise the Leaflet map centred on (lat, lng).
- * Safe to call multiple times – ignored after first call.
- */
 export function initMap(lat, lng) {
-  if (map) { map.setView([lat, lng], 17); return; }
+  if (map) {
+    map.setView([lat, lng], 17);
+    _moveDot(lat, lng, 20);
+    return;
+  }
 
-  map = L.map("map", { zoomControl: false, attributionControl: true })
-         .setView([lat, lng], 17);
+  map = L.map("map", {
+    zoomControl: false,
+    attributionControl: true,
+    tap: false
+  }).setView([lat, lng], 17);
 
-  // OpenStreetMap tiles
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-    maxZoom: 20
+    maxZoom: 20,
+    keepBuffer: 4
   }).addTo(map);
 
-  // Zoom control top-right
   L.control.zoom({ position: 'topright' }).addTo(map);
 
-  // "Re-centre" button
+  // Re-centre button
   const locCtrl = L.control({ position: 'bottomright' });
   locCtrl.onAdd = () => {
     const div = L.DomUtil.create('div', 'leaflet-bar');
-    div.innerHTML = '<a href="#" title="Centre on me" style="font-size:18px;display:flex;align-items:center;justify-content:center;width:34px;height:34px;text-decoration:none">📍</a>';
-    L.DomEvent.on(div, 'click', L.DomEvent.stop);
-    L.DomEvent.on(div, 'click', () => { if (posMarker) map.panTo(posMarker.getLatLng()); });
+    div.innerHTML = `<a href="#" title="Follow me"
+      style="font-size:20px;display:flex;align-items:center;justify-content:center;
+             width:36px;height:36px;text-decoration:none;background:white">📍</a>`;
+    L.DomEvent.disableClickPropagation(div);
+    L.DomEvent.on(div, 'click', e => {
+      L.DomEvent.preventDefault(e);
+      autoFollow = true;
+      if (posMarker) map.setView(posMarker.getLatLng(), 17, { animate: true });
+    });
     return div;
   };
   locCtrl.addTo(map);
 
-  // Player position marker
+  // Stop auto-follow when user drags
+  map.on('dragstart', () => { autoFollow = false; });
+
+  // Accuracy ring
+  accuracyCircle = L.circle([lat, lng], {
+    radius: 20, color: '#3b82f6', fillColor: '#3b82f6',
+    fillOpacity: 0.08, weight: 1, opacity: 0.4
+  }).addTo(map);
+
+  // Position dot
   posMarker = L.circleMarker([lat, lng], {
-    radius: 8, color: 'white', fillColor: '#3b82f6',
+    radius: 9, color: 'white', fillColor: '#3b82f6',
     fillOpacity: 1, weight: 3, zIndexOffset: 1000
   }).addTo(map);
 }
 
-/**
- * Begin GPS tracking. Call after initMap().
- * @param {object} callbacks  { onPositionUpdate, onLoopClosed, onCheatDetected, onError }
- */
 export function startTracking(callbacks) {
-  cbs  = callbacks || {};
-  path = [];
+  cbs        = callbacks || {};
+  path       = [];
+  autoFollow = true;
 
-  // Fresh polyline
-  if (polyline) { polyline.remove(); polyline = null; }
-  if (startMarker) { startMarker.remove(); startMarker = null; }
+  _clearTrailLayers();
 
-  polyline = L.polyline([], {
-    color: '#10b981', weight: 5, opacity: .9, lineCap: 'round', lineJoin: 'round'
+  // Walking trail line
+  trailLine = L.polyline([], {
+    color: '#10b981', weight: 5, opacity: 0.95,
+    lineCap: 'round', lineJoin: 'round'
   }).addTo(map);
 
+  // Live area preview (fills in as you walk)
+  previewPoly = L.polygon([], {
+    color: '#10b981', fillColor: '#10b981',
+    fillOpacity: 0.15, weight: 2,
+    dashArray: '6,5'
+  }).addTo(map);
+
+  if (!('geolocation' in navigator)) {
+    cbs.onError && cbs.onError({ message: 'Geolocation not supported' });
+    return;
+  }
+
   watchID = navigator.geolocation.watchPosition(
-    onGPSUpdate,
+    _onGPSUpdate,
     err => { console.error("GPS error:", err); cbs.onError && cbs.onError(err); },
-    { enableHighAccuracy: true, maximumAge: 3000, timeout: 15000 }
+    { enableHighAccuracy: true, maximumAge: 2000, timeout: 15000 }
   );
 }
 
-/**
- * Stop GPS tracking and clear the current path visuals.
- */
 export function stopTracking() {
-  if (watchID !== null) { navigator.geolocation.clearWatch(watchID); watchID = null; }
-  if (polyline)    { polyline.remove();    polyline    = null; }
-  if (startMarker) { startMarker.remove(); startMarker = null; }
+  if (watchID !== null) {
+    navigator.geolocation.clearWatch(watchID);
+    watchID = null;
+  }
+  _clearTrailLayers();
   path = [];
 }
 
-/**
- * Re-render every territory polygon from the Firestore snapshot.
- * @param {Array}  territories   Array of territory objects from Firestore
- * @param {string} currentUserId UID of the logged-in player
- */
 export function renderTerritories(territories, currentUserId) {
-  // Remove old layers
   Object.values(layers).forEach(l => { try { l.remove(); } catch (_) {} });
   layers = {};
   if (!map) return;
@@ -104,48 +128,56 @@ export function renderTerritories(territories, currentUserId) {
   territories.forEach(t => {
     if (!t.coordinates || t.coordinates.length < 3) return;
     try {
-      const latlngs = normCoords(t.coordinates);
+      const latlngs = _normCoords(t.coordinates);
       const mine    = t.userId === currentUserId;
       const poly    = L.polygon(latlngs, {
         color:       t.color || '#3b82f6',
         fillColor:   t.color || '#3b82f6',
-        fillOpacity: mine ? 0.35 : 0.15,
-        weight:      mine ? 3 : 1.5,
-        opacity:     mine ? 1  : 0.7
+        fillOpacity: mine ? 0.40 : 0.18,
+        weight:      mine ? 3    : 1.5,
+        opacity:     mine ? 1    : 0.7
       }).addTo(map);
 
       poly.bindPopup(
-        `<div style="font-family:sans-serif;font-size:13px">
-          <strong>${htmlEsc(t.displayName || 'Unknown')}</strong><br>
-          ${fmtArea(t.area)}<br>
-          ${mine ? '<span style="color:#10b981">✓ Your territory</span>' : ''}
+        `<div style="font-family:sans-serif;font-size:13px;padding:2px">
+          <strong>${_esc(t.displayName || 'Unknown')}</strong><br>
+          ${_fmtArea(t.area)} captured
+          ${mine ? '<br><span style="color:#10b981;font-weight:700">✓ Yours</span>' : ''}
         </div>`
       );
       layers[t.id] = poly;
-    } catch (e) { console.warn("render territory error:", e); }
+    } catch (e) { console.warn("Territory render error:", e); }
   });
 }
 
-/**
- * Pan the map to the player's current GPS position.
- */
 export function panToUser() {
-  if (posMarker && map) map.panTo(posMarker.getLatLng(), { animate: true });
+  if (posMarker && map) {
+    autoFollow = true;
+    map.setView(posMarker.getLatLng(), 17, { animate: true });
+  }
 }
 
-// ── GPS update handler ────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  GPS UPDATE — fires every time the device sends a new position
+// ══════════════════════════════════════════════════════════════════════════════
 
-function onGPSUpdate(pos) {
-  const lat = pos.coords.latitude;
-  const lng = pos.coords.longitude;
-  const now = Date.now();
+function _onGPSUpdate(pos) {
+  const lat      = pos.coords.latitude;
+  const lng      = pos.coords.longitude;
+  const accuracy = pos.coords.accuracy || 20;
+  const now      = Date.now();
 
-  // Move position dot
-  if (posMarker) posMarker.setLatLng([lat, lng]);
+  // 1 ── Move position dot and accuracy ring
+  _moveDot(lat, lng, accuracy);
 
-  // Anti-cheat vs previous point
+  // 2 ── Auto-follow: keep map centred on player
+  if (autoFollow && map) {
+    map.panTo([lat, lng], { animate: true, duration: 0.5 });
+  }
+
+  // 3 ── Anti-cheat
   if (path.length > 0) {
-    const prev = path[path.length - 1];
+    const prev    = path[path.length - 1];
     const elapsed = (now - prev.time) / 1000;
     const { cheat, reason } = detectCheat(prev, { lat, lng }, elapsed);
     if (cheat) {
@@ -155,63 +187,98 @@ function onGPSUpdate(pos) {
     }
   }
 
-  // Append point
+  // 4 ── Record point
   path.push({ lat, lng, time: now });
-  if (polyline) polyline.setLatLngs(path.map(p => [p.lat, p.lng]));
 
-  // Draw start marker on first fix
+  const latlngs = path.map(p => [p.lat, p.lng]);
+
+  // 5 ── Redraw trail line in real time
+  if (trailLine) trailLine.setLatLngs(latlngs);
+
+  // 6 ── Update live area preview polygon
+  if (previewPoly && path.length >= 3) previewPoly.setLatLngs(latlngs);
+
+  // 7 ── Start marker on first fix
   if (path.length === 1) {
     startMarker = L.circleMarker([lat, lng], {
-      radius: 11, color: '#10b981', fillColor: '#10b981', fillOpacity: 0.35, weight: 2
+      radius: 12, color: '#10b981', fillColor: '#10b981',
+      fillOpacity: 0.4, weight: 2.5
+    }).bindTooltip('🟢 Start — return here!', {
+      permanent: true, direction: 'top', offset: [0, -14]
     }).addTo(map);
-    startMarker.bindTooltip('Start', { permanent: true, direction: 'top', offset: [0, -10] });
   }
 
-  // Cumulative path distance
+  // 8 ── Cumulative distance
   let totalKm = 0;
   for (let i = 1; i < path.length; i++) totalKm += haversineKm(path[i - 1], path[i]);
 
-  // Notify app of position
-  cbs.onPositionUpdate && cbs.onPositionUpdate({ lat, lng, totalKm, points: path.length });
+  // 9 ── Notify app
+  cbs.onPositionUpdate && cbs.onPositionUpdate({ lat, lng, totalKm, points: path.length, accuracy });
 
-  // ── Loop closure detection ──────────────────────────────────────────────────
+  // 10 ── Loop closure detection
   if (path.length < MIN_POINTS || totalKm < MIN_PATH_KM) return;
 
   const distToStart = haversineKm({ lat, lng }, path[0]);
 
-  // Pulse start marker as player approaches
+  // Pulse start marker orange when player is close
   if (startMarker) {
-    if (distToStart < CLOSE_RADIUS_KM * 3) {
-      startMarker.setStyle({ color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.7, radius: 16 });
-      startMarker.setTooltipContent('🔁 Return here!');
+    if (distToStart < CLOSE_RADIUS_KM * 4) {
+      startMarker.setStyle({ color: '#f59e0b', fillColor: '#f59e0b', fillOpacity: 0.8, radius: 16 });
+      startMarker.setTooltipContent('🔁 Almost there — close the loop!');
     } else {
-      startMarker.setStyle({ color: '#10b981', fillColor: '#10b981', fillOpacity: 0.35, radius: 11 });
-      startMarker.setTooltipContent('Start');
+      startMarker.setStyle({ color: '#10b981', fillColor: '#10b981', fillOpacity: 0.4, radius: 12 });
+      startMarker.setTooltipContent('🟢 Start — return here!');
     }
   }
 
-  // Auto-close loop
+  // ── Auto-close the loop ─────────────────────────────────────────────────────
   if (distToStart < CLOSE_RADIUS_KM) {
-    const closedPath = [...path.map(p => [p.lat, p.lng]), [path[0].lat, path[0].lng]];
-    stopTracking();
+    const closedPath = [...latlngs, [path[0].lat, path[0].lng]];
+
+    stopTracking(); // clears trail layers
+
+    // Brief green flash of the captured area
+    if (map) {
+      const flash = L.polygon(closedPath, {
+        color: '#10b981', fillColor: '#10b981', fillOpacity: 0.5, weight: 3
+      }).addTo(map);
+      setTimeout(() => { try { flash.remove(); } catch (_) {} }, 2500);
+    }
+
     cbs.onLoopClosed && cbs.onLoopClosed(closedPath, totalKm);
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════════════════════════════════
 
-/** Accept [{lat,lng}] or [[lat,lng]] coordinate arrays. */
-function normCoords(arr) {
+function _moveDot(lat, lng, accuracy) {
+  if (posMarker)     posMarker.setLatLng([lat, lng]);
+  if (accuracyCircle) {
+    accuracyCircle.setLatLng([lat, lng]);
+    accuracyCircle.setRadius(Math.max(accuracy, 8));
+  }
+}
+
+function _clearTrailLayers() {
+  [trailLine, previewPoly, startMarker].forEach(l => {
+    if (l) { try { l.remove(); } catch (_) {} }
+  });
+  trailLine = previewPoly = startMarker = null;
+}
+
+function _normCoords(arr) {
   return arr.map(c => Array.isArray(c) ? c : [c.lat, c.lng]);
 }
 
-function fmtArea(m2) {
-  if (!m2) return '0 m²';
-  if (m2 > 1e6) return (m2 / 1e6).toFixed(2) + ' km²';
-  if (m2 > 10000) return (m2 / 10000).toFixed(2) + ' ha';
+function _fmtArea(m2) {
+  if (!m2 || m2 <= 0) return '0 m²';
+  if (m2 >= 1_000_000) return (m2 / 1_000_000).toFixed(2) + ' km²';
+  if (m2 >= 10_000)    return (m2 / 10_000).toFixed(2)    + ' ha';
   return Math.round(m2).toLocaleString() + ' m²';
 }
 
-function htmlEsc(s) {
-  return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+function _esc(s) {
+  return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
