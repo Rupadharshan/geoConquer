@@ -1,35 +1,42 @@
-// map.js — Exactly like your working ChatGPT version, but with:
-// • Arrow marker that rotates with phone compass
-// • Trail line behind you
-// • Live area fill preview
-// • Map pans to follow you
+// map.js
+// Fixes in this version:
+//  • Compass uses exponential smoothing (no more jitter)
+//  • Compass dead-zone: arrow only updates if heading changes >5°
+//  • webkitCompassHeading for iOS, absolute deviceorientation for Android
+//  • maxNativeZoom:19 prevents grey tiles when zooming too far in
+//  • "Close loop" pulse only triggers after 100 m walked (was 60 m)
 
 let map;
 let polyline;
 let previewPoly;
 let startMarker;
-let playerMarker;     // the arrow showing your position + direction
+let playerMarker;
 let path = [];
-let currentHeading = 0;  // degrees from compass
 
-// ── Arrow icon — rotates based on compass heading ──────────────────────────
+// Compass state
+let smoothHeading  = 0;     // exponentially smoothed heading
+let lastIconDeg    = -999;  // last degree we actually updated the icon at
+const SMOOTH_ALPHA = 0.15;  // lower = smoother but slower (0.1–0.25 is good)
+const DEAD_ZONE    = 5;     // degrees — ignore changes smaller than this
+
+// ── Arrow icon ────────────────────────────────────────────────────────────────
 function makeArrow(deg) {
   return L.divIcon({
     className: '',
-    iconSize:  [32, 32],
-    iconAnchor:[16, 16],
-    html: `<div style="transform:rotate(${deg}deg);width:32px;height:32px;
+    iconSize:  [36, 36],
+    iconAnchor:[18, 18],
+    html: `<div style="transform:rotate(${deg}deg);width:36px;height:36px;
                 display:flex;align-items:center;justify-content:center">
-      <svg viewBox="0 0 24 24" width="32" height="32">
+      <svg viewBox="0 0 24 24" width="36" height="36">
         <polygon points="12,2 20,22 12,17 4,22"
           fill="#3b82f6" stroke="white" stroke-width="1.5"
-          style="filter:drop-shadow(0 2px 3px rgba(0,0,0,0.5))"/>
+          style="filter:drop-shadow(0 2px 4px rgba(0,0,0,.55))"/>
       </svg>
     </div>`
   });
 }
 
-// ── Called once after login — same as ChatGPT version ─────────────────────
+// ── initMap — called once after login ────────────────────────────────────────
 export function initMap(lat, lng) {
   if (map) {
     map.setView([lat, lng], 17);
@@ -42,18 +49,21 @@ export function initMap(lat, lng) {
 
   L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
     attribution: '© OpenStreetMap',
-    maxZoom: 20
+    maxZoom:       20,
+    maxNativeZoom: 19,   // ← FIX: prevents grey tiles on excessive zoom
+    keepBuffer:     4
   }).addTo(map);
 
   L.control.zoom({ position: 'topright' }).addTo(map);
 
-  // 📍 re-centre button bottom right
-  const recenter = L.control({ position: 'bottomright' });
-  recenter.onAdd = () => {
+  // Re-centre button
+  const btn = L.control({ position: 'bottomright' });
+  btn.onAdd = () => {
     const d = L.DomUtil.create('div', 'leaflet-bar');
     d.innerHTML = `<a href="#" style="display:flex;align-items:center;
       justify-content:center;width:36px;height:36px;font-size:18px;
-      text-decoration:none;background:white">📍</a>`;
+      text-decoration:none;background:white;border-radius:4px"
+      title="Centre on me">📍</a>`;
     L.DomEvent.disableClickPropagation(d);
     L.DomEvent.on(d, 'click', e => {
       L.DomEvent.preventDefault(e);
@@ -61,113 +71,111 @@ export function initMap(lat, lng) {
     });
     return d;
   };
-  recenter.addTo(map);
+  btn.addTo(map);
 
-  // Player arrow marker
+  // Player arrow
   playerMarker = L.marker([lat, lng], {
-    icon: makeArrow(0),
-    zIndexOffset: 1000
+    icon: makeArrow(0), zIndexOffset: 1000
   }).addTo(map);
 
-  // Start compass listener
-  _startCompass();
-
-  // Also draw a polyline (start empty — same as ChatGPT)
+  // Start trail polyline
   polyline = L.polyline([], {
     color: '#ef4444', weight: 5, opacity: 0.9,
     lineCap: 'round', lineJoin: 'round'
   }).addTo(map);
+
+  _startCompass();
 }
 
-// ── Called on every GPS fix — SAME SIGNATURE as ChatGPT version ───────────
-// app.js calls this exactly like: updatePath(lat, lng)
+// ── updatePath — called on every GPS fix from app.js ─────────────────────────
 export function updatePath(lat, lng) {
   path.push([lat, lng]);
+  const n = path.length;
 
-  // 1. Move the arrow marker to new position
+  // Move arrow
   if (playerMarker) {
     playerMarker.setLatLng([lat, lng]);
-    playerMarker.setIcon(makeArrow(currentHeading));
+    playerMarker.setIcon(makeArrow(smoothHeading));
   }
 
-  // 2. Pan map to follow player — this is the key line that was missing
-  if (map) {
-    map.panTo([lat, lng], { animate: true, duration: 0.8 });
-  }
+  // Pan map to follow
+  if (map) map.panTo([lat, lng], { animate: true, duration: 0.8 });
 
-  // 3. Draw trail behind player
-  if (polyline) {
-    polyline.setLatLngs(path);
-  }
+  // Draw trail
+  if (polyline) polyline.setLatLngs(path);
 
-  // 4. Show the area being captured as a live transparent polygon
-  if (path.length >= 3) {
+  // Draw live area fill
+  if (n >= 3) {
     if (!previewPoly) {
       previewPoly = L.polygon([], {
         color: '#10b981', fillColor: '#10b981',
-        fillOpacity: 0.2, weight: 2,
-        dashArray: '6 4'
+        fillOpacity: 0.18, weight: 2, dashArray: '6 4'
       }).addTo(map);
     }
     previewPoly.setLatLngs(path);
   }
 
-  // 5. Place start marker on first point
-  if (path.length === 1) {
+  // Place start marker on first point
+  if (n === 1) {
     startMarker = L.circleMarker([lat, lng], {
-      radius: 10, color: '#10b981', fillColor: '#10b981',
+      radius: 11, color: '#10b981', fillColor: '#10b981',
       fillOpacity: 0.6, weight: 3
     }).bindTooltip('🟢 Return here to capture!', {
-      permanent: true, direction: 'top', offset: [0, -12]
+      permanent: true, direction: 'top', offset: [0, -13]
     }).addTo(map);
   }
 
-  // 6. Pulse start marker orange when player is within ~60 m of closing the loop
-  if (path.length >= 6 && startMarker) {
-    const dx    = lat - path[0][0];
-    const dy    = lng - path[0][1];
-    const distM = Math.sqrt(dx * dx + dy * dy) * 111195;
-    if (distM < 60) {
-      startMarker.setStyle({ color: '#f59e0b', fillColor: '#f59e0b', radius: 14 });
+  // ── Close-loop hint: only after 100 m walked ─────────────────────────────
+  // Calculate total path distance in metres
+  if (n >= 8 && startMarker) {
+    let totalM = 0;
+    for (let i = 1; i < n; i++) {
+      const dx = path[i][0] - path[i-1][0];
+      const dy = path[i][1] - path[i-1][1];
+      totalM  += Math.sqrt(dx*dx + dy*dy) * 111195;
+    }
+
+    const dx          = lat - path[0][0];
+    const dy          = lng - path[0][1];
+    const distToStart = Math.sqrt(dx*dx + dy*dy) * 111195; // metres
+
+    if (totalM >= 100 && distToStart < 60) {
+      // Enough distance walked AND close to start
+      startMarker.setStyle({ color: '#f59e0b', fillColor: '#f59e0b', radius: 15 });
       startMarker.setTooltipContent('🔁 Close the loop now!');
     } else {
-      startMarker.setStyle({ color: '#10b981', fillColor: '#10b981', radius: 10 });
+      startMarker.setStyle({ color: '#10b981', fillColor: '#10b981', radius: 11 });
       startMarker.setTooltipContent('🟢 Return here to capture!');
     }
   }
 }
 
-// ── Return path and wipe map trail (called when loop closes) ──────────────
 export function getAndClearPath() {
   const copy = [...path];
   clearPath();
   return copy;
 }
 
-// ── Wipe everything — same as what ChatGPT stopBtn does ───────────────────
 export function clearPath() {
   path = [];
-  if (polyline)    { polyline.setLatLngs([]); }
+  if (polyline)    polyline.setLatLngs([]);
   if (previewPoly) { previewPoly.remove(); previewPoly = null; }
   if (startMarker) { startMarker.remove(); startMarker = null; }
 }
 
-// ── Flash the captured polygon briefly ────────────────────────────────────
 export function flashCapture(latlngs) {
   if (!map) return;
   const f = L.polygon(latlngs, {
     color: '#10b981', fillColor: '#10b981', fillOpacity: 0.5, weight: 3
   }).addTo(map);
-  setTimeout(() => { try { f.remove(); } catch(_) {} }, 2500);
+  setTimeout(() => { try { f.remove(); } catch(_){} }, 2500);
 }
 
-// ── Draw all saved territories from Firestore ──────────────────────────────
 let layers = {};
 export function renderTerritories(territories, myUid) {
-  Object.values(layers).forEach(l => { try { l.remove(); } catch(_) {} });
+  Object.values(layers).forEach(l => { try { l.remove(); } catch(_){} });
   layers = {};
   if (!map) return;
-
   territories.forEach(t => {
     if (!t.coordinates || t.coordinates.length < 3) return;
     try {
@@ -179,55 +187,61 @@ export function renderTerritories(territories, myUid) {
         fillOpacity: mine ? 0.4 : 0.15,
         weight:      mine ? 3   : 1.5
       }).addTo(map);
-      poly.bindPopup(`<b>${t.displayName || 'Unknown'}</b><br>${_fmt(t.area)}${mine ? '<br>✓ Yours' : ''}`);
+      poly.bindPopup(`<b>${t.displayName||'Unknown'}</b><br>${_fmt(t.area)}${mine?'<br>✓ Yours':''}`);
       layers[t.id] = poly;
     } catch(e) { console.warn('render err', e); }
   });
 }
 
-// ── Same function name as ChatGPT version ─────────────────────────────────
 export function getPath() { return path; }
 
-// ══════════════════════════════════════════════════════════════════════════
-//  COMPASS — uses DeviceOrientationEvent to rotate the arrow
-// ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════════
+//  COMPASS — smoothed + dead-zone filtered
+// ══════════════════════════════════════════════════════════════════════════════
+
 function _startCompass() {
-  // iOS 13+ needs permission
   if (typeof DeviceOrientationEvent !== 'undefined' &&
       typeof DeviceOrientationEvent.requestPermission === 'function') {
-    // We request on first user interaction (handled in app.js startBtn)
     window._compassNeedsPermission = true;
   }
-
+  // Try absolute first (more accurate on Android), fall back to relative
   window.addEventListener('deviceorientationabsolute', _onOrientation, true);
   window.addEventListener('deviceorientation',         _onOrientation, true);
 }
 
+// Smoothing helper — handles 0°/360° wraparound correctly
+function _smoothAngle(current, target, alpha) {
+  let diff = target - current;
+  // Wrap difference to [-180, 180]
+  if (diff >  180) diff -= 360;
+  if (diff < -180) diff += 360;
+  return current + alpha * diff;
+}
+
 function _onOrientation(e) {
-  let heading = null;
+  let raw = null;
 
   if (e.webkitCompassHeading != null) {
-    // iOS — this is the true north heading directly
-    heading = e.webkitCompassHeading;
-  } else if (e.absolute && e.alpha != null) {
-    // Android absolute
-    heading = 360 - e.alpha;
+    // iOS — already true north, no conversion needed
+    raw = e.webkitCompassHeading;
   } else if (e.alpha != null) {
-    // Android non-absolute fallback
-    heading = 360 - e.alpha;
+    // Android — alpha is degrees anticlockwise from north, so invert
+    raw = (360 - e.alpha) % 360;
   }
 
-  if (heading == null) return;
+  if (raw == null) return;
 
-  currentHeading = heading;
+  // Exponential smoothing (handles wraparound)
+  smoothHeading = _smoothAngle(smoothHeading, raw, SMOOTH_ALPHA);
+  const rounded = Math.round(smoothHeading);
 
-  // Update arrow icon immediately if marker exists
-  if (playerMarker) {
-    playerMarker.setIcon(makeArrow(heading));
+  // Dead-zone: only redraw icon if heading changed by > DEAD_ZONE degrees
+  if (Math.abs(rounded - lastIconDeg) > DEAD_ZONE) {
+    lastIconDeg = rounded;
+    if (playerMarker) playerMarker.setIcon(makeArrow(rounded));
   }
 }
 
-// ── Format area helper ─────────────────────────────────────────────────────
 function _fmt(m2) {
   if (!m2 || m2 <= 0) return '0 m²';
   if (m2 >= 1e6) return (m2/1e6).toFixed(2)+' km²';
