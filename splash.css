@@ -1,0 +1,196 @@
+/* splash.css — Running silhouette loading screen */
+
+#splashScreen {
+  position: fixed;
+  inset: 0;
+  background: #0a0e17;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 32px;
+  transition: opacity 0.5s ease;
+}
+
+#splashScreen.fade-out {
+  opacity: 0;
+  pointer-events: none;
+}
+
+/* ── Logo ── */
+.splash-logo {
+  text-align: center;
+}
+.splash-logo .logo-icon {
+  font-size: 52px;
+  line-height: 1;
+  margin-bottom: 10px;
+  animation: logoBounce 1.2s ease-in-out infinite;
+}
+@keyframes logoBounce {
+  0%, 100% { transform: translateY(0); }
+  50%       { transform: translateY(-8px); }
+}
+.splash-logo h1 {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 2.2rem;
+  font-weight: 800;
+  background: linear-gradient(135deg, #3b82f6, #8b5cf6);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+  letter-spacing: -0.5px;
+}
+.splash-logo p {
+  color: #9ca3af;
+  font-size: 13px;
+  margin-top: 4px;
+  font-family: 'Segoe UI', system-ui, sans-serif;
+}
+
+/* ── Running track ── */
+.runner-track {
+  width: 280px;
+  height: 90px;
+  position: relative;
+  overflow: hidden;
+}
+
+/* Ground line */
+.runner-track::after {
+  content: '';
+  position: absolute;
+  bottom: 8px;
+  left: 0; right: 0;
+  height: 2px;
+  background: linear-gradient(90deg,
+    transparent 0%, #3b82f6 20%, #8b5cf6 50%, #3b82f6 80%, transparent 100%);
+  border-radius: 1px;
+}
+
+/* The runner SVG travels left → right, then loops */
+.runner-figure {
+  position: absolute;
+  bottom: 10px;
+  left: -60px;
+  animation: runAcross 1.8s linear infinite;
+}
+
+@keyframes runAcross {
+  0%   { left: -60px; }
+  100% { left: 300px; }
+}
+
+/* ── SVG Runner frames — CSS animates between 4 poses ── */
+.runner-figure svg {
+  width: 48px;
+  height: 68px;
+}
+
+/* Animate the running legs via stroke-dashoffset cycling */
+.leg-front {
+  animation: legFront 0.36s ease-in-out infinite alternate;
+  transform-origin: 50% 40%;
+}
+.leg-back {
+  animation: legBack  0.36s ease-in-out infinite alternate;
+  transform-origin: 50% 40%;
+}
+.arm-front {
+  animation: armFront 0.36s ease-in-out infinite alternate;
+  transform-origin: 50% 25%;
+}
+.arm-back {
+  animation: armBack  0.36s ease-in-out infinite alternate;
+  transform-origin: 50% 25%;
+}
+.torso-bob {
+  animation: torsoBob 0.36s ease-in-out infinite alternate;
+}
+
+@keyframes legFront  {
+  from { transform: rotate(-28deg); }
+  to   { transform: rotate( 32deg); }
+}
+@keyframes legBack   {
+  from { transform: rotate( 32deg); }
+  to   { transform: rotate(-28deg); }
+}
+@keyframes armFront  {
+  from { transform: rotate( 30deg); }
+  to   { transform: rotate(-24deg); }
+}
+@keyframes armBack   {
+  from { transform: rotate(-24deg); }
+  to   { transform: rotate( 30deg); }
+}
+@keyframes torsoBob  {
+  from { transform: translateY(0px);  }
+  to   { transform: translateY(-3px); }
+}
+
+/* ── Footstep dots on the ground ── */
+.footsteps {
+  position: absolute;
+  bottom: 4px;
+  left: 0; right: 0;
+  height: 6px;
+  overflow: hidden;
+}
+.footstep {
+  position: absolute;
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: #3b82f6;
+  bottom: 0;
+  opacity: 0;
+  animation: stepAppear 1.8s linear infinite;
+}
+.footstep:nth-child(1)  { left:  8%; animation-delay: 0.00s; }
+.footstep:nth-child(2)  { left: 15%; animation-delay: 0.18s; }
+.footstep:nth-child(3)  { left: 23%; animation-delay: 0.36s; }
+.footstep:nth-child(4)  { left: 30%; animation-delay: 0.54s; }
+.footstep:nth-child(5)  { left: 38%; animation-delay: 0.72s; }
+.footstep:nth-child(6)  { left: 45%; animation-delay: 0.90s; }
+.footstep:nth-child(7)  { left: 53%; animation-delay: 1.08s; }
+.footstep:nth-child(8)  { left: 60%; animation-delay: 1.26s; }
+.footstep:nth-child(9)  { left: 68%; animation-delay: 1.44s; }
+.footstep:nth-child(10) { left: 75%; animation-delay: 1.62s; }
+
+@keyframes stepAppear {
+  0%   { opacity: 0;   transform: scale(0.5); }
+  5%   { opacity: 0.8; transform: scale(1);   }
+  40%  { opacity: 0.3; }
+  100% { opacity: 0;   }
+}
+
+/* ── Loading bar ── */
+.splash-bar-wrap {
+  width: 200px;
+  height: 4px;
+  background: #1f2937;
+  border-radius: 2px;
+  overflow: hidden;
+}
+.splash-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #3b82f6, #8b5cf6);
+  border-radius: 2px;
+  animation: loadBar 2s ease-in-out infinite;
+}
+@keyframes loadBar {
+  0%   { width: 0%;    margin-left: 0%; }
+  50%  { width: 70%;   margin-left: 15%; }
+  100% { width: 0%;    margin-left: 100%; }
+}
+
+.splash-tip {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  font-size: 12px;
+  color: #6b7280;
+  text-align: center;
+  max-width: 220px;
+  line-height: 1.5;
+}
