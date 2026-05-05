@@ -1,7 +1,21 @@
 // app.js
-// watchPosition is structured EXACTLY like the working ChatGPT version —
-// updatePath(lat, lng) is called first, THEN cheat check.
-// Nothing blocks the map update.
+// watchPosition structured exactly like working ChatGPT version.
+// updatePath(lat, lng) called FIRST — nothing blocks the map update.
+
+// ── Hide splash screen once app is ready ─────────────────────────────────────
+function hideSplash() {
+  const splash = document.getElementById('splashScreen');
+  if (!splash) return;
+  splash.classList.add('fade-out');
+  setTimeout(() => { splash.style.display = 'none'; }, 500);
+}
+// Minimum splash display time so animation plays at least once
+const _splashStart = Date.now();
+function hideSplashDelayed() {
+  const elapsed = Date.now() - _splashStart;
+  const wait    = Math.max(0, 1800 - elapsed); // show for at least 1.8 s
+  setTimeout(hideSplash, wait);
+}
 
 import { signup, login, googleLogin, logout, listenAuth } from "./auth.js";
 import {
@@ -159,10 +173,12 @@ async function initGame() {
   navigator.geolocation.getCurrentPosition(
     pos => {
       initMap(pos.coords.latitude, pos.coords.longitude);
+      hideSplashDelayed();   // ← hide splash once map is initialised
       showToast('📍 Map ready! Press Start to capture.');
     },
     err => {
       console.error('GPS init error:', err);
+      hideSplashDelayed();   // ← hide splash even on GPS error
       showToast('⚠️ Enable GPS permission and refresh.', 6000);
     },
     { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
@@ -257,13 +273,13 @@ el.startBtn.onclick = () => {
         ? '🔵 Return to start to capture!'
         : '📍 Tracking… walk in a loop!';
 
-      // ── Step 4: Check if loop is closed ──────────────────────────────────
+      // ── Step 4: Check if loop is closed (min 100 m walked) ──────────────
       const path = getPath();
-      if (path.length >= 6 && distance >= 0.05) {
-        const dx      = lat - path[0][0];
-        const dy      = lng - path[0][1];
-        const distToStart = Math.sqrt(dx * dx + dy * dy) * 111195; // metres
-        if (distToStart < 20) {
+      if (path.length >= 8 && distance >= 0.10) {   // 0.10 km = 100 m
+        const dx          = lat - path[0][0];
+        const dy          = lng - path[0][1];
+        const distToStart = Math.sqrt(dx * dx + dy * dy) * 111195;
+        if (distToStart < 20) {   // within 20 m of start
           closeLoop();
         }
       }
