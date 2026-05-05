@@ -2,19 +2,87 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
   <title>GeoConquer – Territory Game</title>
+  <link rel="stylesheet" href="splash.css">
   <link rel="stylesheet" href="style.css">
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-  <!-- Turf.js for polygon geometry operations -->
   <script src="https://cdn.jsdelivr.net/npm/@turf/turf@6/turf.min.js"></script>
-  <!-- Leaflet map library -->
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
 
-  <!-- ═══════════════════════════════════ AUTH SCREEN ═══════════════════════════════════ -->
-  <div id="authScreen" class="screen">
+  <!-- ═══════════ SPLASH / LOADING SCREEN ════════════════════════════════ -->
+  <div id="splashScreen">
+    <div class="splash-logo">
+      <div class="logo-icon">🗺️</div>
+      <h1>GeoConquer</h1>
+      <p>Explore. Capture. Dominate.</p>
+    </div>
+
+    <!-- Running figure animation -->
+    <div class="runner-track">
+      <div class="runner-figure">
+        <svg viewBox="0 0 48 68" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <!-- Head -->
+          <circle cx="24" cy="8" r="6" fill="#e2e8f0"/>
+          <!-- Torso (bobs up/down) -->
+          <g class="torso-bob">
+            <line x1="24" y1="14" x2="24" y2="36"
+                  stroke="#e2e8f0" stroke-width="3.5" stroke-linecap="round"/>
+            <!-- Back arm -->
+            <g class="arm-back">
+              <line x1="24" y1="20" x2="10" y2="30"
+                    stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>
+              <line x1="10" y1="30" x2="14" y2="40"
+                    stroke="#94a3b8" stroke-width="2.5" stroke-linecap="round"/>
+            </g>
+            <!-- Front arm -->
+            <g class="arm-front">
+              <line x1="24" y1="20" x2="38" y2="30"
+                    stroke="#e2e8f0" stroke-width="3" stroke-linecap="round"/>
+              <line x1="38" y1="30" x2="34" y2="40"
+                    stroke="#e2e8f0" stroke-width="2.5" stroke-linecap="round"/>
+            </g>
+          </g>
+          <!-- Back leg -->
+          <g class="leg-back">
+            <line x1="24" y1="36" x2="12" y2="52"
+                  stroke="#94a3b8" stroke-width="3.5" stroke-linecap="round"/>
+            <line x1="12" y1="52" x2="4"  y2="62"
+                  stroke="#94a3b8" stroke-width="3" stroke-linecap="round"/>
+          </g>
+          <!-- Front leg -->
+          <g class="leg-front">
+            <line x1="24" y1="36" x2="36" y2="52"
+                  stroke="#e2e8f0" stroke-width="3.5" stroke-linecap="round"/>
+            <line x1="36" y1="52" x2="44" y2="62"
+                  stroke="#e2e8f0" stroke-width="3" stroke-linecap="round"/>
+          </g>
+        </svg>
+      </div>
+
+      <!-- Footstep dots -->
+      <div class="footsteps">
+        <div class="footstep"></div>
+        <div class="footstep"></div>
+        <div class="footstep"></div>
+        <div class="footstep"></div>
+        <div class="footstep"></div>
+        <div class="footstep"></div>
+        <div class="footstep"></div>
+        <div class="footstep"></div>
+        <div class="footstep"></div>
+        <div class="footstep"></div>
+      </div>
+    </div>
+
+    <div class="splash-bar-wrap"><div class="splash-bar"></div></div>
+    <div class="splash-tip">Loading your map and location…</div>
+  </div>
+
+  <!-- ═══════════ AUTH SCREEN ════════════════════════════════════════════ -->
+  <div id="authScreen" class="screen" style="display:none">
     <div class="auth-container">
       <div class="game-logo">
         <div class="logo-icon">🗺️</div>
@@ -24,26 +92,29 @@
 
       <div class="auth-tabs">
         <button class="tab-btn active" onclick="switchAuthTab('login', this)">Login</button>
-        <button class="tab-btn" onclick="switchAuthTab('signup', this)">Sign Up</button>
+        <button class="tab-btn"        onclick="switchAuthTab('signup', this)">Sign Up</button>
       </div>
 
-      <!-- Login -->
       <div id="loginTab" class="tab-content" style="display:flex">
-        <input id="loginEmail" type="email" placeholder="Email address" autocomplete="email">
-        <input id="loginPass" type="password" placeholder="Password" autocomplete="current-password">
+        <input id="loginEmail" type="email"     placeholder="Email address"  autocomplete="email">
+        <input id="loginPass"  type="password"  placeholder="Password"       autocomplete="current-password">
         <button id="loginBtn" class="btn-primary">Login</button>
         <div class="divider"><span>or</span></div>
         <button id="googleBtn" class="btn-google">
-          <svg width="18" height="18" viewBox="0 0 18 18"><path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/><path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/><path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/><path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/></svg>
+          <svg width="18" height="18" viewBox="0 0 18 18">
+            <path fill="#4285F4" d="M17.64 9.2c0-.637-.057-1.251-.164-1.84H9v3.481h4.844a4.14 4.14 0 0 1-1.796 2.716v2.259h2.908c1.702-1.567 2.684-3.875 2.684-6.615z"/>
+            <path fill="#34A853" d="M9 18c2.43 0 4.467-.806 5.956-2.18l-2.908-2.259c-.806.54-1.837.86-3.048.86-2.344 0-4.328-1.584-5.036-3.711H.957v2.332A8.997 8.997 0 0 0 9 18z"/>
+            <path fill="#FBBC05" d="M3.964 10.71A5.41 5.41 0 0 1 3.682 9c0-.593.102-1.17.282-1.71V4.958H.957A8.996 8.996 0 0 0 0 9c0 1.452.348 2.827.957 4.042l3.007-2.332z"/>
+            <path fill="#EA4335" d="M9 3.58c1.321 0 2.508.454 3.44 1.345l2.582-2.58C13.463.891 11.426 0 9 0A8.997 8.997 0 0 0 .957 4.958L3.964 7.29C4.672 5.163 6.656 3.58 9 3.58z"/>
+          </svg>
           Continue with Google
         </button>
       </div>
 
-      <!-- Signup -->
       <div id="signupTab" class="tab-content" style="display:none">
-        <input id="signupName" placeholder="Display name (shown on map)" autocomplete="nickname">
-        <input id="signupEmail" type="email" placeholder="Email address" autocomplete="email">
-        <input id="signupPass" type="password" placeholder="Password (min 6 chars)" autocomplete="new-password">
+        <input id="signupName"  placeholder="Display name"   autocomplete="nickname">
+        <input id="signupEmail" type="email"    placeholder="Email address"  autocomplete="email">
+        <input id="signupPass"  type="password" placeholder="Password (min 6 chars)" autocomplete="new-password">
         <button id="signupBtn" class="btn-primary">Create Account</button>
       </div>
 
@@ -51,10 +122,9 @@
     </div>
   </div>
 
-  <!-- ═══════════════════════════════════ GAME SCREEN ═══════════════════════════════════ -->
+  <!-- ═══════════ GAME SCREEN ════════════════════════════════════════════ -->
   <div id="gameScreen" class="screen" style="display:none">
 
-    <!-- Header -->
     <div id="header">
       <div id="playerInfo">
         <div id="playerAvatar" class="avatar">?</div>
@@ -66,13 +136,12 @@
       <div id="headerStats">
         <div class="stat-badge">🏆 <span id="headerArea">0 m²</span></div>
       </div>
-      <button id="menuBtn" class="icon-btn" title="Open menu">☰</button>
+      <button id="menuBtn" class="icon-btn">☰</button>
     </div>
 
-    <!-- Map fills middle -->
     <div id="map"></div>
 
-    <!-- Bottom Controls -->
+    <!-- ── Bottom controls bar — visible above phone navigation ── -->
     <div id="controls">
       <div id="captureStatus">
         <div id="statusText">🟢 Ready to explore</div>
@@ -80,49 +149,38 @@
       </div>
       <div id="controlBtns">
         <button id="startBtn" class="btn-capture">▶ Start</button>
-        <button id="stopBtn" class="btn-stop" style="display:none">⏹ Cancel</button>
+        <button id="stopBtn"  class="btn-stop"    style="display:none">⏹ Cancel</button>
       </div>
     </div>
 
-    <!-- Side Panel (slides in) -->
+    <!-- Side panel -->
     <div id="sidePanel">
       <div class="panel-header">
         <h2>Menu</h2>
         <button class="close-btn" onclick="closePanel()">✕</button>
       </div>
       <div class="panel-tabs">
-        <button class="panel-tab active" onclick="showPanelTab('Leaderboard', this)">🏆 Ranks</button>
-        <button class="panel-tab" onclick="showPanelTab('Challenges', this)">🎯 Daily</button>
-        <button class="panel-tab" onclick="showPanelTab('Stats', this)">📊 Stats</button>
+        <button class="panel-tab active" onclick="showPanelTab('Leaderboard',this)">🏆 Ranks</button>
+        <button class="panel-tab"        onclick="showPanelTab('Challenges',this)">🎯 Daily</button>
+        <button class="panel-tab"        onclick="showPanelTab('Stats',this)">📊 Stats</button>
       </div>
-      <div id="panelLeaderboard" class="panel-content">
-        <div id="leaderboardList"><p class="panel-loading">Loading...</p></div>
-      </div>
-      <div id="panelChallenges" class="panel-content" style="display:none">
-        <div id="challengesList"><p class="panel-loading">Loading...</p></div>
-      </div>
-      <div id="panelStats" class="panel-content" style="display:none">
-        <div id="myStats"><p class="panel-loading">Loading...</p></div>
-      </div>
+      <div id="panelLeaderboard" class="panel-content"><div id="leaderboardList"><p class="panel-loading">Loading…</p></div></div>
+      <div id="panelChallenges"  class="panel-content" style="display:none"><div id="challengesList"><p class="panel-loading">Loading…</p></div></div>
+      <div id="panelStats"       class="panel-content" style="display:none"><div id="myStats"><p class="panel-loading">Loading…</p></div></div>
       <button id="logoutBtn" class="btn-logout">Logout</button>
     </div>
-
-    <!-- Slide-in panel backdrop -->
     <div id="panelBackdrop" onclick="closePanel()"></div>
 
-    <!-- Toast notification -->
-    <div id="toast" class="toast" style="display:none"></div>
-
-    <!-- Capture celebration overlay -->
+    <div id="toast"          class="toast"           style="display:none"></div>
     <div id="captureOverlay" class="capture-overlay" style="display:none">
       <div class="capture-card">
         <div class="capture-icon">🎉</div>
         <div id="captureTitle">Territory Captured!</div>
         <div id="captureDetails"></div>
-        <button onclick="document.getElementById('captureOverlay').style.display='none'" class="btn-primary" style="margin-top:16px">Awesome!</button>
+        <button onclick="document.getElementById('captureOverlay').style.display='none'"
+                class="btn-primary" style="margin-top:16px">Awesome!</button>
       </div>
     </div>
-
   </div>
 
   <script type="module" src="app.js"></script>
